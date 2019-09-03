@@ -102,6 +102,7 @@ def main():
     )
 
     average_ankle_position_line = []  # contains all average ankle points
+    average_shoulder_position_line = []
     all_ankle_positions = []
     average_spine_angle_data = numpy.empty((0, 1), float)
     for i, data in enumerate(tqdm(get_iterable_data(video_source))):
@@ -109,17 +110,32 @@ def main():
         average_ankle_position = data['ankle_average_position']
         average_shoulder_position = data['shoulder_average_position']
         average_ankle_position_line.append(average_ankle_position)
+        average_shoulder_position_line.append(average_shoulder_position)
         average_spine_angle_data = numpy.append(
             average_spine_angle_data, data['spine_angle']
         )
         all_ankle_positions.append(data['ankle_positions'])
 
+        average_ankle_width = int(numpy.average(
+            numpy.array(average_ankle_position_line)[-(fps // 2):, 0]
+        ))
+        average_ankle_height = int(numpy.average(
+            numpy.array(average_ankle_position_line)[:, 1]
+        ))
+
+        average_shoulder_width = int(numpy.average(
+            numpy.array(average_shoulder_position_line)[-(fps // 2):, 0]
+        ))
+        average_shoulder_height = int(numpy.average(
+            numpy.array(average_shoulder_position_line)[:, 1]
+        ))
+
         # draw joints and ankle to shoulder line
         frame = visualize.visualize_joints(frame, data['pose'])
         cv2.line(
             frame,
-            tuple(average_ankle_position),
-            tuple(average_shoulder_position),
+            (average_ankle_width, average_ankle_height),
+            (average_shoulder_width, average_shoulder_height),
             (0, 255, 0), 5
         )
         video_output.write(frame)

@@ -2,18 +2,16 @@ import cv2
 import numpy
 import typing
 
-from fastapi import FastAPI
-from starlette.responses import HTMLResponse
-from starlette.websockets import WebSocket
+from tqdm import tqdm
 
 from util.config import load_config
 from nnet import predict
+from util import visualize
 from dataset.pose_dataset import data_to_input
+
 
 cfg = load_config('demo/pose_cfg.yaml')
 sess, inputs, outputs = predict.setup_pose_prediction(cfg)
-
-app = FastAPI()
 
 
 def angle_between(
@@ -25,13 +23,13 @@ def angle_between(
     return numpy.rad2deg((ang1 - ang2) % (2 * numpy.pi))
 
 
-def get_video_frames(path: str) -> typing.Generator[bytes, None, None]:
-    source = cv2.VideoCapture(path)
+def get_video_frames(source) -> typing.Generator[bytes, None, None]:
     while source:
         ret, frame = source.read()
         if not ret:
             break
         yield frame
+    source.release()
 
 
 def get_frame_pose(frame):
@@ -42,19 +40,16 @@ def get_frame_pose(frame):
     return predict.argmax_pose_predict(scmap, locref, cfg.stride)
 
 
-def get_iterable_data(path: str):
-    for frame in get_video_frames(path):
+def get_iterable_data(source) -> typing.Generator[dict, None, None]:
+    for frame in get_video_frames(source):
         pose = get_frame_pose(frame)
-        # skip frames with prob less that 70%
-        # if pose[-1] < 0.7:
-        #     continue
         ankle_average_position = numpy.array((
-            (pose[0][0] + pose[5][0]) / 2,
-            (pose[0][1] + pose[5][1]) / 2,
+            int((pose[0][0] + pose[5][0]) / 2),
+            int((pose[0][1] + pose[5][1]) / 2),
         ))
-        shoulder_average_position = numpy.array(( 
-            (pose[8][0] + pose[9][0]) / 2,
-            (pose[8][1] + pose[9][1]) / 2,
+        shoulder_average_position = numpy.array((
+            int((pose[8][0] + pose[9][0]) / 2),
+            int((pose[8][1] + pose[9][1]) / 2),
         ))
         spine_angle = 360 - angle_between(
             shoulder_average_position, ankle_average_position
@@ -68,8 +63,14 @@ def get_iterable_data(path: str):
             'frame': frame,
             'pose': pose,
             'spine_angle': spine_angle,
+            'ankle_positions': (
+                pose[0], pose[5]
+            ),
             'ankle_average_position': ankle_average_position,
             'shoulder_average_position': shoulder_average_position,
+            'minimum_probability_passed': not (
+                pose[0][-1] < 0.7 or pose[5][-1] < 0.7
+            ),  # skip frames with ankle position prob less that 70%
         }
 
 
@@ -78,7 +79,7 @@ def get_run_direction(
     finish_ankle_position: typing.Tuple[float, float],
 ) -> str:
     run_direction = None
-    if first_ankle_position[0] > finish_ankle_position[0]: # right to left
+    if first_ankle_position[0] > finish_ankle_position[0]:  # right to left
         run_direction = 'rtl'
     else:
         run_direction = 'ltr'
@@ -86,73 +87,78 @@ def get_run_direction(
 
 
 def main():
-    video_source = '/mnt/source.mp4'
+    video_source = cv2.VideoCapture('/mnt/source.mp4')
+
+    width = int(video_source.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(video_source.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(video_source.get(cv2.CAP_PROP_FPS))
+    total_frames_count = int(video_source.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    print(f'Video parameters: width={width}, height={height}, fps={fps}, total_frames_count={total_frames_count}')
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_output = cv2.VideoWriter(
+        '/mnt/output.mp4', fourcc, fps, (width, height)
+    )
+
     average_ankle_position_line = []  # contains all average ankle points
-    average_spine_angle = numpy.empty((0, 1), float)
-    for i, data in enumerate(get_iterable_data(video_source)):
-        print(f'Processing frame #{i}')
-        print(f'Spine angle: {data["spine_angle"]}')
-        average_ankle_position_line.append(data['ankle_average_position'])
-        average_spine_angle = numpy.append(average_spine_angle, data['spine_angle'])
-        print(average_spine_angle)
-        if i == 3:
-            break
+    all_ankle_positions = []
+    average_spine_angle_data = numpy.empty((0, 1), float)
+    for i, data in enumerate(tqdm(get_iterable_data(video_source))):
+        frame = data['frame']
+        average_ankle_position = data['ankle_average_position']
+        average_shoulder_position = data['shoulder_average_position']
+        average_ankle_position_line.append(average_ankle_position)
+        average_spine_angle_data = numpy.append(
+            average_spine_angle_data, data['spine_angle']
+        )
+        all_ankle_positions.append(data['ankle_positions'])
+
+        # draw joints and ankle to shoulder line
+        frame = visualize.visualize_joints(frame, data['pose'])
+        cv2.line(
+            frame,
+            tuple(average_ankle_position),
+            tuple(average_shoulder_position),
+            (0, 255, 0), 5
+        )
+        video_output.write(frame)
     run_direction = get_run_direction(
         average_ankle_position_line[0],
         average_ankle_position_line[-1],
     )
     average_ankle_position_line = numpy.array(average_ankle_position_line)
-    average_run_line_height = numpy.median(average_ankle_position_line[:, 1])
-    print(f'Average angle position line: {average_ankle_position_line}')
+    average_run_line_height = numpy.average(average_ankle_position_line[:, 1])
+    average_spine_angle = numpy.median(average_spine_angle_data)
     print(f'Run direction: {run_direction}')
     print(f'Average run line height: {average_run_line_height}')
+    print(f'Average spine angle: {average_spine_angle}')
+
+    steps_counter: typing.List[int] = []
+    current_ankle_index: int = 0
+    last_ankle_flip_frame_index: int = 0
+    for frame, ankle_positions in enumerate(all_ankle_positions):
+        reverse_ankle_index = 1 if current_ankle_index == 0 else 0
+        ankle_flip = ankle_positions[current_ankle_index][1] > ankle_positions[reverse_ankle_index][1]
+        if ankle_flip and frame > last_ankle_flip_frame_index + (fps / 3):
+            current_ankle_index = reverse_ankle_index
+            last_ankle_flip_frame_index = frame
+            steps_counter.append(frame)
+
+    total_steps_count = len(steps_counter)
+    total_video_length = (total_frames_count / fps)
+    total_steps_per_minute = (total_steps_count / total_video_length) * 60
+
+    print(f'Total steps count: {total_steps_count}')
+    print(f'Total steps per minute: {total_steps_per_minute}')
+
+    return {
+        'run_direction': run_direction,
+        'average_spine_angle': average_spine_angle,
+        'total_steps_count': total_steps_count,
+        'steps_per_minute': total_steps_per_minute,
+    }
 
 
-main()
-
-# html = """
-# <!DOCTYPE html>
-# <html>
-#     <head>
-#         <title>Chat</title>
-#     </head>
-#     <body>
-#         <h1>WebSocket Chat</h1>
-#         <form action="" onsubmit="sendMessage(event)">
-#             <input type="text" id="messageText" autocomplete="off"/>
-#             <button>Send</button>
-#         </form>
-#         <ul id='messages'>
-#         </ul>
-#         <script>
-#             var ws = new WebSocket("ws://localhost:8000/ws");
-#             ws.onmessage = function(event) {
-#                 var messages = document.getElementById('messages')
-#                 var message = document.createElement('li')
-#                 var content = document.createTextNode(event.data)
-#                 message.appendChild(content)
-#                 messages.appendChild(message)
-#             };
-#             function sendMessage(event) {
-#                 var input = document.getElementById("messageText")
-#                 ws.send(input.value)
-#                 input.value = ''
-#                 event.preventDefault()
-#             }
-#         </script>
-#     </body>
-# </html>
-# """
-
-
-# @app.get("/")
-# async def get():
-#     return HTMLResponse(html)
-
-
-# @app.websocket("/ws")
-# async def websocket_endpoint(websocket: WebSocket):
-#     await websocket.accept()
-#     while True:
-#         data = await websocket.receive_text()
-#         await websocket.send_text(f"Message text was: {data}")
+if __name__ == '__main__':
+    main()

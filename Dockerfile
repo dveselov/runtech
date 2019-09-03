@@ -1,5 +1,6 @@
 FROM python:3.7
 ENV TF_CUDNN_USE_AUTOTUNE=0
+RUN apt-get update && apt-get -y install ffmpeg x264 libx264-dev && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /usr/src/app
 WORKDIR /usr/src/app
 RUN git clone https://github.com/bureaucratic-labs/pose-tensorflow.git pose_tensorflow

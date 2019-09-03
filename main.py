@@ -117,14 +117,14 @@ def main():
         all_ankle_positions.append(data['ankle_positions'])
 
         average_ankle_width = int(numpy.average(
-            numpy.array(average_ankle_position_line)[-(fps // 2):, 0]
+            numpy.array(average_ankle_position_line)[-(fps // 4):, 0]
         ))
         average_ankle_height = int(numpy.average(
             numpy.array(average_ankle_position_line)[:, 1]
         ))
 
         average_shoulder_width = int(numpy.average(
-            numpy.array(average_shoulder_position_line)[-(fps // 2):, 0]
+            numpy.array(average_shoulder_position_line)[-(fps // 4):, 0]
         ))
         average_shoulder_height = int(numpy.average(
             numpy.array(average_shoulder_position_line)[:, 1]

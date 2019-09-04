@@ -43,30 +43,30 @@ def get_frame_pose(frame):
 def get_iterable_data(source) -> typing.Generator[dict, None, None]:
     for frame in get_video_frames(source):
         pose = get_frame_pose(frame)
-        ankle_average_position = numpy.array((
-            int((pose[0][0] + pose[5][0]) / 2),
-            int((pose[0][1] + pose[5][1]) / 2),
+        hip_average_position = numpy.array((
+            int((pose[2][0] + pose[3][0]) / 2),
+            int((pose[2][1] + pose[3][1]) / 2),
         ))
         shoulder_average_position = numpy.array((
             int((pose[8][0] + pose[9][0]) / 2),
             int((pose[8][1] + pose[9][1]) / 2),
         ))
-        spine_angle = 360 - angle_between(
-            shoulder_average_position, ankle_average_position
+        body_angle = 360 - angle_between(
+            shoulder_average_position, hip_average_position
         )
-        if spine_angle > 90:
+        if body_angle > 90:
             # FIXME
-            spine_angle = angle_between(
-                shoulder_average_position, ankle_average_position
+            body_angle = angle_between(
+                shoulder_average_position, hip_average_position
             )
         yield {
             'frame': frame,
             'pose': pose,
-            'spine_angle': spine_angle,
+            'body_angle': body_angle,
             'ankle_positions': (
                 pose[0], pose[5]
             ),
-            'ankle_average_position': ankle_average_position,
+            'hip_average_position': hip_average_position,
             'shoulder_average_position': shoulder_average_position,
             'minimum_probability_passed': not (
                 pose[0][-1] < 0.7 or pose[5][-1] < 0.7
@@ -101,54 +101,47 @@ def main():
         '/mnt/output.mp4', fourcc, fps, (width, height)
     )
 
-    average_ankle_position_line = []  # contains all average ankle points
+    average_hip_position_line = []  # contains all average ankle points
     average_shoulder_position_line = []
     all_ankle_positions = []
-    average_spine_angle_data = numpy.empty((0, 1), float)
+    average_body_angle_data = numpy.empty((0, 1), float)
     for i, data in enumerate(tqdm(get_iterable_data(video_source))):
         frame = data['frame']
-        average_ankle_position = data['ankle_average_position']
+        average_hip_position = data['hip_average_position']
         average_shoulder_position = data['shoulder_average_position']
-        average_ankle_position_line.append(average_ankle_position)
+        average_hip_position_line.append(average_hip_position)
         average_shoulder_position_line.append(average_shoulder_position)
-        average_spine_angle_data = numpy.append(
-            average_spine_angle_data, data['spine_angle']
+        average_body_angle_data = numpy.append(
+            average_body_angle_data, data['body_angle']
         )
         all_ankle_positions.append(data['ankle_positions'])
 
-        average_ankle_width = int(numpy.average(
-            numpy.array(average_ankle_position_line)[-(fps // 4):, 0]
-        ))
-        average_ankle_height = int(numpy.average(
-            numpy.array(average_ankle_position_line)[:, 1]
-        ))
-
-        average_shoulder_width = int(numpy.average(
-            numpy.array(average_shoulder_position_line)[-(fps // 4):, 0]
+        average_hip_height = int(numpy.average(
+            numpy.array(average_hip_position_line)[-(fps // 4):, 1]
         ))
         average_shoulder_height = int(numpy.average(
-            numpy.array(average_shoulder_position_line)[:, 1]
+            numpy.array(average_shoulder_position_line)[-(fps // 4):, 1]
         ))
 
         # draw joints and ankle to shoulder line
         frame = visualize.visualize_joints(frame, data['pose'])
         cv2.line(
             frame,
-            (average_ankle_width, average_ankle_height),
-            (average_shoulder_width, average_shoulder_height),
+            (average_hip_position[0], average_hip_height),
+            (average_shoulder_position[0], average_shoulder_height),
             (0, 255, 0), 5
         )
         video_output.write(frame)
     run_direction = get_run_direction(
-        average_ankle_position_line[0],
-        average_ankle_position_line[-1],
+        average_hip_position_line[0],
+        average_hip_position_line[-1],
     )
-    average_ankle_position_line = numpy.array(average_ankle_position_line)
-    average_run_line_height = numpy.average(average_ankle_position_line[:, 1])
-    average_spine_angle = numpy.median(average_spine_angle_data)
+    average_hip_position_line = numpy.array(average_hip_position_line)
+    average_run_line_height = numpy.average(average_hip_position_line[:, 1])
+    average_body_angle = numpy.median(average_body_angle_data)
     print(f'Run direction: {run_direction}')
     print(f'Average run line height: {average_run_line_height}')
-    print(f'Average spine angle: {average_spine_angle}')
+    print(f'Average body angle: {average_body_angle}')
 
     steps_counter: typing.List[int] = []
     current_ankle_index: int = 0
@@ -170,7 +163,7 @@ def main():
 
     return {
         'run_direction': run_direction,
-        'average_spine_angle': average_spine_angle,
+        'average_body_angle': average_body_angle,
         'total_steps_count': total_steps_count,
         'steps_per_minute': total_steps_per_minute,
     }

@@ -1,6 +1,8 @@
+import typing
+
 import cv2
 import numpy
-import typing
+import scipy.stats
 
 from tqdm import tqdm
 
@@ -131,6 +133,49 @@ def main():
             (average_shoulder_position[0], average_shoulder_height),
             (0, 255, 0), 5
         )
+
+        # remove outliners from raw data via iqr range
+        # https://en.wikipedia.org/wiki/Interquartile_range
+        median_angle = numpy.median(average_body_angle_data)
+        iqr = scipy.stats.iqr(average_body_angle_data)
+        maximum_angle = median_angle + iqr
+        minimum_angle = median_angle - iqr
+        average_body_angle_data_without_outliners = numpy.extract(
+            (minimum_angle <= average_body_angle_data) & (average_body_angle_data <= maximum_angle), average_body_angle_data
+        )
+
+        # draw statistics
+        average_body_angle = round(numpy.average(
+            average_body_angle_data_without_outliners
+        ), 1)
+        cv2.putText(
+            frame,
+            f'Body angle [avg]: {average_body_angle}',
+            (0, 64), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0),
+            3, cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            f'Body angle [avg]: {average_body_angle}',
+            (0, 64), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255),
+            2, cv2.LINE_AA,
+        )
+        maximum_body_angle = round(numpy.amax(
+            average_body_angle_data_without_outliners
+        ), 1)
+        cv2.putText(
+            frame,
+            f'Body angle [max]: {maximum_body_angle}',
+            (0, 128), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0),
+            3, cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            f'Body angle [max]: {maximum_body_angle}',
+            (0, 128), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255),
+            2, cv2.LINE_AA,
+        )
+
         video_output.write(frame)
     run_direction = get_run_direction(
         average_hip_position_line[0],

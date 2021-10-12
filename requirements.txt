@@ -17,7 +17,7 @@ matplotlib==3.1.1
 munkres==1.1.2
 networkx==2.3
 numpy==1.17.1
-opencv-python==4.1.0.25
+opencv-python==4.1.1.26
 Pillow-SIMD==6.0.0.post0
 protobuf==3.9.1
 pyparsing==2.4.2
